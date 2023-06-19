@@ -1,13 +1,14 @@
 const puppeteer = require("puppeteer-extra");
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
-
+const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
+const csv = require('csv-parser');
 // Add stealth plugin and use defaults (all tricks to hide puppeteer usage)
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 puppeteer.use(StealthPlugin());
 
-const example = '1 HOTEL SF LLC'
-
-async function search (name, outputfile) {
+async function search(name, outputfile) {
   console.log("starting search");
   const browser = await puppeteer.launch({
     headless: false,
@@ -27,7 +28,7 @@ async function search (name, outputfile) {
   // print out the first page title
   const title = await page.title();
   console.log("title", title);
-  
+
   // wait three seconds to load
   await page.waitForTimeout(1000);
 
@@ -57,14 +58,14 @@ async function search (name, outputfile) {
 
   // Save the parsed output to a CSV file
   const csvWriter = createCsvWriter({
-    path: 'output.csv',
+    path: outputfile,
     header: [
-      {id: 'entity', title: 'ENTITY'},
-      {id: 'initialFilingDate', title: 'INITIAL FILING DATE'},
-      {id: 'status', title: 'STATUS'},
-      {id: 'entityType', title: 'ENTITY TYPE'},
-      {id: 'formedIn', title: 'FORMED IN'},
-      {id: 'agent', title: 'AGENT'},
+      { id: 'entity', title: 'ENTITY' },
+      { id: 'initialFilingDate', title: 'INITIAL FILING DATE' },
+      { id: 'status', title: 'STATUS' },
+      { id: 'entityType', title: 'ENTITY TYPE' },
+      { id: 'formedIn', title: 'FORMED IN' },
+      { id: 'agent', title: 'AGENT' },
     ]
   });
 
@@ -75,4 +76,63 @@ async function search (name, outputfile) {
   await browser.close();
 }
 
-search(example, 'example.csv')
+async function processFile(file) {
+  const ext = path.extname(file);
+  let lines = [];
+
+  if (ext === '.txt') {
+    const fileStream = fs.createReadStream(file);
+
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity
+    });
+
+    for await (const line of rl) {
+      lines.push(line);
+    }
+  } else if (ext === '.csv') {
+    return new Promise((resolve, reject) => {
+      fs.createReadStream(file)
+        .pipe(csv())
+        .on('data', (row) => {
+          lines.push(row.ENTITY);
+        })
+        .on('end', () => {
+          resolve(lines);
+        })
+        .on('error', reject);
+    });
+  } else {
+    throw new Error("Unsupported file type");
+  }
+
+  // if output folder does not exist, create it
+  if (!fs.existsSync('./output')) {
+    fs.mkdirSync('./output');
+  }
+
+  for (const line of lines) {
+    // Strip all non-alphanumeric characters and replace spaces with underscores
+    const filename = line.replace(/\W/g, '_') + ".csv";
+    await search(line, './output/' + filename);
+  }
+}
+
+if (!process.argv[2]) {
+  console.error('Please provide a file to process');
+  return;
+}
+
+const inputArg = process.argv[2];
+if (
+  !inputArg.includes('.txt') &&
+  !inputArg.includes('.csv')
+) {
+  console.log('Processing single entity', inputArg)
+  search(inputArg, inputArg + '.csv');
+  return
+}
+
+
+processFile(process.argv[2]);
